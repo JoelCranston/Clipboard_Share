@@ -64,7 +64,7 @@ final class OmaclipKitTests: XCTestCase {
     }
 
     func testGoStringEscaping() {
-        XCTAssertEqual(GoJSON.string("a\"b\\c\n<>&\u{1}\u{2028}é"), #""a\"b\\c\n<>&\u0001 é""#)
+        XCTAssertEqual(GoJSON.string("a\"b\\c\n<>&\u{1}\u{2028}é"), #""a\"b\\c\n\u003c\u003e\u0026\u0001\u2028é""#)
     }
 
     func testTimestampFormatting() {
