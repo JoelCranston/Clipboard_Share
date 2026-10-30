@@ -1,3 +1,5 @@
+<p align="center"><img src="Support/AppIcon-1024.png" width="160" alt="ClipShare icon"></p>
+
 # ClipShare
 
 **Share your clipboard between macOS and [Omarchy](https://omarchy.org) Linux.**
@@ -110,6 +112,7 @@ key, manifest JSON and checksum, JSON escaping), and run a real HTTPS server ↔
 | `Sources/ClipShare` | The AppKit/SwiftUI menu bar app |
 | `Sources/CArgon2` | Reference Argon2 implementation, vendored from [P-H-C/phc-winner-argon2](https://github.com/P-H-C/phc-winner-argon2) at `f57e61e` |
 | `Support/Info.plist` | App bundle metadata |
+| `Support/AppIcon.*` | App icon: SVG source, 1024px render, and the `.icns` used by the bundle |
 | `scripts/build-app.sh` | Builds and signs the `.app` bundle |
 
 ## Acknowledgements
