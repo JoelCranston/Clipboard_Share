@@ -88,10 +88,17 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Show clipboard history", value: "⌥⌘V")
-                LabeledContent("Paste latest peer entry", value: "⌃⌥⌘V")
+                LabeledContent("Show clipboard history") {
+                    ShortcutRecorder(shortcut: $preferences.showHistoryShortcut, defaultShortcut: .showHistoryDefault)
+                }
+                LabeledContent("Paste latest peer entry") {
+                    ShortcutRecorder(shortcut: $preferences.pasteLatestShortcut, defaultShortcut: .pasteLatestDefault)
+                }
             } header: {
                 Text("Shortcuts")
+            } footer: {
+                Text("Click a shortcut, then press the new keys. Esc cancels, Delete restores the default. Shortcuts need ⌘, ⌥ or ⌃ (F-keys can be used alone).")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

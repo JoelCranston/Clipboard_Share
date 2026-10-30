@@ -16,11 +16,11 @@ a small Swift/AppKit app that lives in the menu bar and stays out of the way.
 
 - **Menu bar only.** No Dock icon and no window until you ask for one. The icon dims when no peer
   is connected, and its menu shows each peer's status.
-- **History panel (⌥⌘V).** A Spotlight-style panel with everything copied on this Mac and on your
+- **History panel (⌥⌘V by default).** A Spotlight-style panel with everything copied on this Mac and on your
   Linux machines. Type to search; use ↑/↓ and Return, ⌘1–9 for quick picks, and Tab to switch
   between All / This Mac / Peers. Choosing an entry copies it and (optionally) pastes it into the
   app you were using.
-- **Paste latest from Linux (⌃⌥⌘V).** Pastes the newest entry from any peer straight into the
+- **Paste latest from Linux (⌃⌥⌘V by default).** Pastes the newest entry from any peer straight into the
   front app.
 - **Auto-Copy from Peers.** An optional menu toggle that puts every new Linux copy onto the Mac
   clipboard as soon as it arrives.
@@ -29,8 +29,9 @@ a small Swift/AppKit app that lives in the menu bar and stays out of the way.
 - **Text and images,** including image files copied in Finder (sent as the image itself, not its name).
 - **Private by default.** It skips items that password managers mark as concealed or transient,
   keeps history in memory only, and stores the passphrase in the Keychain.
-- **Keyboard-layout aware.** Shortcuts and the automatic paste follow your active layout
-  (Dvorak, AZERTY, …) rather than physical QWERTY key positions.
+- **Customizable, layout-aware shortcuts.** Change either shortcut in Settings › Shortcuts.
+  Shortcuts and the automatic paste follow your active layout (Dvorak, AZERTY, …) rather than
+  physical QWERTY key positions.
 
 ## Requirements
 

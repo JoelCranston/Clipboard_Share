@@ -1,66 +1,106 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Maps characters to virtual key codes using the active keyboard layout, so shortcuts and the
-/// synthesized ⌘V follow Dvorak, AZERTY, etc. instead of physical QWERTY positions.
+/// Maps between characters and virtual key codes using the active keyboard layout, so shortcuts
+/// and the synthesized ⌘V follow Dvorak, AZERTY, etc. instead of physical QWERTY positions.
+///
+/// Translation is done with ⌘ held, which also covers layouts such as "Dvorak – QWERTY ⌘"
+/// that switch to QWERTY under Command.
 enum KeyboardLayout {
-    /// The key that types `character` while ⌘ is held (which also covers layouts such as
-    /// "Dvorak – QWERTY ⌘" that switch to QWERTY under Command).
+    /// The key that types `character` while ⌘ is held.
     static func keyCode(for character: Character) -> Int? {
         let target = String(character).lowercased()
+        return withLayout { layout in
+            (0..<128).first { translate(layout, keyCode: $0)?.lowercased() == target }
+        }
+    }
+
+    /// The lowercase character a key types while ⌘ is held, if it types a visible character.
+    static func character(for keyCode: Int) -> String? {
+        withLayout { layout in
+            guard let text = translate(layout, keyCode: keyCode)?.lowercased(),
+                  let scalar = text.unicodeScalars.first,
+                  !CharacterSet.controlCharacters.contains(scalar),
+                  !CharacterSet.whitespacesAndNewlines.contains(scalar)
+            else { return nil }
+            return text
+        }
+    }
+
+    private static func withLayout<T>(_ body: (UnsafePointer<UCKeyboardLayout>) -> T?) -> T? {
         for source in [TISCopyCurrentKeyboardLayoutInputSource(), TISCopyCurrentASCIICapableKeyboardLayoutInputSource()] {
             guard let source = source?.takeRetainedValue(),
                   let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
             else { continue }
             let layoutData = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
-            let found: Int? = layoutData.withUnsafeBytes { raw in
+            let result: T? = layoutData.withUnsafeBytes { raw in
                 guard let base = raw.baseAddress else { return nil }
-                let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
-                for code in 0..<128 {
-                    var deadKeyState: UInt32 = 0
-                    var characters = [UniChar](repeating: 0, count: 4)
-                    var length = 0
-                    let status = UCKeyTranslate(
-                        layout, UInt16(code), UInt16(kUCKeyActionDown), UInt32((cmdKey >> 8) & 0xFF),
-                        UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
-                        &deadKeyState, characters.count, &length, &characters
-                    )
-                    if status == noErr, length > 0,
-                       String(utf16CodeUnits: characters, count: length).lowercased() == target {
-                        return code
-                    }
-                }
-                return nil
+                return body(base.assumingMemoryBound(to: UCKeyboardLayout.self))
             }
-            if let found { return found }
+            if let result { return result }
         }
         return nil
+    }
+
+    private static func translate(_ layout: UnsafePointer<UCKeyboardLayout>, keyCode: Int) -> String? {
+        var deadKeyState: UInt32 = 0
+        var characters = [UniChar](repeating: 0, count: 4)
+        var length = 0
+        let status = UCKeyTranslate(
+            layout, UInt16(keyCode), UInt16(kUCKeyActionDown), UInt32((cmdKey >> 8) & 0xFF),
+            UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+            &deadKeyState, characters.count, &length, &characters
+        )
+        guard status == noErr, length > 0 else { return nil }
+        return String(utf16CodeUnits: characters, count: length)
     }
 }
 
 /// Global keyboard shortcuts via Carbon's RegisterEventHotKey, which needs no Accessibility permission.
-/// Shortcuts are defined by character and re-registered whenever the keyboard layout changes.
+/// Shortcuts are re-registered whenever they change or the keyboard layout changes.
 @MainActor
 final class HotKeyCenter {
     static let shared = HotKeyCenter()
 
     private struct Binding {
-        let character: Character
-        let fallbackKeyCode: Int
-        let modifiers: Int
+        var shortcut: Shortcut
         let action: () -> Void
     }
 
     private var bindings: [UInt32: Binding] = [:]
+    private var idsByName: [String: UInt32] = [:]
     private var references: [EventHotKeyRef] = []
     private var nextID: UInt32 = 1
     private var installed = false
+    private var suspended = false
 
-    /// Registers `modifiers` (Carbon flags such as `cmdKey | optionKey`) + the key that types `character`.
-    func register(character: Character, fallbackKeyCode: Int, modifiers: Int, action: @escaping () -> Void) {
+    /// Registers (or replaces) the shortcut called `name`.
+    func register(_ name: String, shortcut: Shortcut, action: @escaping () -> Void) {
         installHandlerIfNeeded()
-        bindings[nextID] = Binding(character: character, fallbackKeyCode: fallbackKeyCode, modifiers: modifiers, action: action)
-        nextID += 1
+        let id = idsByName[name] ?? nextID
+        if idsByName[name] == nil {
+            idsByName[name] = id
+            nextID += 1
+        }
+        bindings[id] = Binding(shortcut: shortcut, action: action)
+        registerAll()
+    }
+
+    /// Changes the keys for an already registered shortcut.
+    func update(_ name: String, shortcut: Shortcut) {
+        guard let id = idsByName[name], bindings[id]?.shortcut != shortcut else { return }
+        bindings[id]?.shortcut = shortcut
+        registerAll()
+    }
+
+    /// Temporarily releases all shortcuts, e.g. while the user records a new one.
+    func suspend() {
+        suspended = true
+        registerAll()
+    }
+
+    func resume() {
+        suspended = false
         registerAll()
     }
 
@@ -68,18 +108,22 @@ final class HotKeyCenter {
         bindings[id]?.action()
     }
 
-    private func registerAll() {
+    fileprivate func registerAll() {
         references.forEach { UnregisterEventHotKey($0) }
         references.removeAll()
+        guard !suspended else { return }
         for (id, binding) in bindings.sorted(by: { $0.key < $1.key }) {
-            let keyCode = KeyboardLayout.keyCode(for: binding.character) ?? binding.fallbackKeyCode
+            guard let keyCode = binding.shortcut.resolvedKeyCode else {
+                NSLog("ClipShare: no key types \(binding.shortcut.displayString) in the current layout")
+                continue
+            }
             var reference: EventHotKeyRef?
             let hotKeyID = EventHotKeyID(signature: OSType(0x434C_5348), id: id) // 'CLSH'
-            let status = RegisterEventHotKey(UInt32(keyCode), UInt32(binding.modifiers), hotKeyID, GetApplicationEventTarget(), 0, &reference)
+            let status = RegisterEventHotKey(UInt32(keyCode), UInt32(binding.shortcut.modifiers), hotKeyID, GetApplicationEventTarget(), 0, &reference)
             if status == noErr, let reference {
                 references.append(reference)
             } else {
-                NSLog("ClipShare: could not register hot key for \(binding.character) (\(status)); another app may own it")
+                NSLog("ClipShare: could not register \(binding.shortcut.displayString) (\(status)); another app may own it")
             }
         }
     }

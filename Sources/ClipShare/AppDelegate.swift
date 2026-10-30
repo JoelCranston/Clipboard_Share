@@ -18,12 +18,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        HotKeyCenter.shared.register(character: "v", fallbackKeyCode: kVK_ANSI_V, modifiers: cmdKey | optionKey) { [weak self] in
+        let preferences = model.preferences
+        HotKeyCenter.shared.register("showHistory", shortcut: preferences.showHistoryShortcut) { [weak self] in
             self?.historyPanel.toggle()
         }
-        HotKeyCenter.shared.register(character: "v", fallbackKeyCode: kVK_ANSI_V, modifiers: cmdKey | optionKey | controlKey) { [weak self] in
+        HotKeyCenter.shared.register("pasteLatest", shortcut: preferences.pasteLatestShortcut) { [weak self] in
             self?.model.pasteLatestRemote()
         }
+        preferences.$showHistoryShortcut
+            .sink { HotKeyCenter.shared.update("showHistory", shortcut: $0) }
+            .store(in: &cancellables)
+        preferences.$pasteLatestShortcut
+            .sink { HotKeyCenter.shared.update("pasteLatest", shortcut: $0) }
+            .store(in: &cancellables)
 
         // Dim the menu bar icon while no peer is reachable.
         model.$peerStatuses
@@ -41,15 +48,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let show = NSMenuItem(title: "Show Clipboard History", action: #selector(showHistory), keyEquivalent: "v")
-        show.keyEquivalentModifierMask = [.command, .option]
+        let showKeys = model.preferences.showHistoryShortcut.menuKeyEquivalent
+        let show = NSMenuItem(title: "Show Clipboard History", action: #selector(showHistory), keyEquivalent: showKeys.key)
+        show.keyEquivalentModifierMask = showKeys.mask
         show.target = self
         menu.addItem(show)
 
         let latest = model.latestRemoteItem
         let pasteTitle = latest.map { "Paste Latest from \($0.sourceName)" } ?? "Paste Latest Peer Entry"
-        let paste = NSMenuItem(title: pasteTitle, action: latest == nil ? nil : #selector(pasteLatest), keyEquivalent: "v")
-        paste.keyEquivalentModifierMask = [.command, .option, .control]
+        let pasteKeys = model.preferences.pasteLatestShortcut.menuKeyEquivalent
+        let paste = NSMenuItem(title: pasteTitle, action: latest == nil ? nil : #selector(pasteLatest), keyEquivalent: pasteKeys.key)
+        paste.keyEquivalentModifierMask = pasteKeys.mask
         paste.target = self
         menu.addItem(paste)
         if let latest {

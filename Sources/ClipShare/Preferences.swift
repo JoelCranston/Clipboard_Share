@@ -13,6 +13,8 @@ final class Preferences: ObservableObject {
     @Published var manualPeers: String { didSet { defaults.set(manualPeers, forKey: "manualPeers") } }
     @Published var maxHistory: Int { didSet { defaults.set(maxHistory, forKey: "maxHistory") } }
     @Published var sharedCount: Int { didSet { defaults.set(sharedCount, forKey: "sharedCount") } }
+    @Published var showHistoryShortcut: Shortcut { didSet { save(showHistoryShortcut, forKey: "showHistoryShortcut") } }
+    @Published var pasteLatestShortcut: Shortcut { didSet { save(pasteLatestShortcut, forKey: "pasteLatestShortcut") } }
 
     init() {
         defaults.register(defaults: [
@@ -29,6 +31,16 @@ final class Preferences: ObservableObject {
         manualPeers = defaults.string(forKey: "manualPeers") ?? ""
         maxHistory = defaults.integer(forKey: "maxHistory")
         sharedCount = defaults.integer(forKey: "sharedCount")
+        showHistoryShortcut = Self.load(Shortcut.self, from: defaults, forKey: "showHistoryShortcut") ?? .showHistoryDefault
+        pasteLatestShortcut = Self.load(Shortcut.self, from: defaults, forKey: "pasteLatestShortcut") ?? .pasteLatestDefault
+    }
+
+    private func save<T: Encodable>(_ value: T, forKey key: String) {
+        defaults.set(try? JSONEncoder().encode(value), forKey: key)
+    }
+
+    private static func load<T: Decodable>(_ type: T.Type, from defaults: UserDefaults, forKey key: String) -> T? {
+        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
     }
 
     var launchAtLogin: Bool {
