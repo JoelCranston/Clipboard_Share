@@ -18,10 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
 
-        HotKeyCenter.shared.register(keyCode: kVK_ANSI_V, modifiers: cmdKey | optionKey) { [weak self] in
+        HotKeyCenter.shared.register(character: "v", fallbackKeyCode: kVK_ANSI_V, modifiers: cmdKey | optionKey) { [weak self] in
             self?.historyPanel.toggle()
         }
-        HotKeyCenter.shared.register(keyCode: kVK_ANSI_V, modifiers: cmdKey | optionKey | controlKey) { [weak self] in
+        HotKeyCenter.shared.register(character: "v", fallbackKeyCode: kVK_ANSI_V, modifiers: cmdKey | optionKey | controlKey) { [weak self] in
             self?.model.pasteLatestRemote()
         }
 
