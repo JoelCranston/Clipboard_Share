@@ -29,6 +29,34 @@ public enum IPv4 {
         return result
     }
 
+    /// Resolves a host name to an IPv4 address with the system resolver (which also handles
+    /// `.local` names over mDNS and Tailscale MagicDNS). IPv4 literals are returned unchanged.
+    public static func resolve(_ host: String) async -> String? {
+        if bytes(host) != nil { return host }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                var hints = addrinfo()
+                hints.ai_family = AF_INET
+                hints.ai_socktype = SOCK_STREAM
+                var result: UnsafeMutablePointer<addrinfo>?
+                guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                defer { freeaddrinfo(result) }
+                var cursor: UnsafeMutablePointer<addrinfo>? = first
+                while let entry = cursor?.pointee {
+                    if let address = entry.ai_addr, let text = string(from: address) {
+                        continuation.resume(returning: text)
+                        return
+                    }
+                    cursor = entry.ai_next
+                }
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
     /// Formats an IPv4 sockaddr as text, or returns nil for other families.
     public static func string(from address: UnsafePointer<sockaddr>) -> String? {
         guard address.pointee.sa_family == UInt8(AF_INET) else { return nil }
@@ -64,7 +92,8 @@ public struct Peer: Hashable, Sendable, Identifiable {
         return base
     }
 
-    /// Parses omaclip's `--peers-list` syntax: `[name@]ip:port`, separated by `;`, `,` or newlines.
+    /// Parses omaclip's `--peers-list` syntax, `[name@]host:port`, separated by `;`, `,` or newlines.
+    /// Unlike omaclip, `host` may be a host name as well as an IPv4 address.
     public static func parseList(_ text: String) -> [Peer] {
         text.split(whereSeparator: { $0 == ";" || $0 == "," || $0.isNewline })
             .compactMap { parse(String($0).trimmingCharacters(in: .whitespaces)) }
@@ -79,10 +108,18 @@ public struct Peer: Hashable, Sendable, Identifiable {
             address = String(text[text.index(after: at)...])
         }
         let parts = address.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2, IPv4.bytes(String(parts[0])) != nil,
+        guard parts.count == 2, isValidHost(String(parts[0])),
               let port = Int(parts[1]), (1...65535).contains(port)
         else { return nil }
         if name.isEmpty { name = address }
         return Peer(name: name, host: String(parts[0]), port: port)
+    }
+
+    /// An IPv4 address or a DNS host name such as `omarchy`, `omarchy.local` or `omarchy.tailnet.ts.net`.
+    static func isValidHost(_ host: String) -> Bool {
+        if IPv4.bytes(host) != nil { return true }
+        guard !host.isEmpty, host.count <= 253, !host.hasPrefix("."), !host.hasPrefix("-") else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-."))
+        return host.unicodeScalars.allSatisfy { $0.isASCII && allowed.contains($0) }
     }
 }

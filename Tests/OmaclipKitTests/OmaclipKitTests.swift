@@ -85,12 +85,21 @@ final class OmaclipKitTests: XCTestCase {
     }
 
     func testPeerListParsing() {
-        let peers = Peer.parseList("omarchy@100.101.102.103:36742; 192.168.1.5:4000\nbad@host:1")
+        let peers = Peer.parseList("omarchy@100.101.102.103:36742; 192.168.1.5:4000\nlaptop@omarchy.local:36742, box.tailnet.ts.net:1;bad@:1;x@host:99999;y@has space:5")
         XCTAssertEqual(peers, [
             Peer(name: "omarchy", host: "100.101.102.103", port: 36742),
             Peer(name: "192.168.1.5:4000", host: "192.168.1.5", port: 4000),
+            Peer(name: "laptop", host: "omarchy.local", port: 36742),
+            Peer(name: "box.tailnet.ts.net:1", host: "box.tailnet.ts.net", port: 1),
         ])
         XCTAssertEqual(Peer(name: "omarchy-41234", host: "1.2.3.4", port: 41234).displayName, "omarchy")
+    }
+
+    func testHostResolution() async {
+        let literal = await IPv4.resolve("10.1.2.3")
+        XCTAssertEqual(literal, "10.1.2.3")
+        let localhost = await IPv4.resolve("localhost")
+        XCTAssertEqual(localhost, "127.0.0.1")
     }
 
     /// Runs the real HTTPS server and pulls from it with the real client, as an omaclip peer would.
@@ -108,7 +117,8 @@ final class OmaclipKitTests: XCTestCase {
         defer { server.stop() }
 
         let fetcher = RemoteFetcher(credentials: credentials)
-        let peer = Peer(name: "self", host: "127.0.0.1", port: server.port)
+        // A host name exercises resolution; the fetcher connects by IP so the IP SAN is checked.
+        let peer = Peer(name: "self", host: "localhost", port: server.port)
         let entries = try await fetcher.fetch(peer)
         XCTAssertEqual(entries?.first?.text, "hello from the mac")
         let unchanged = try await fetcher.fetch(peer)

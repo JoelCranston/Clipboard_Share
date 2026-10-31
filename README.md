@@ -78,6 +78,11 @@ In ClipShare's Settings › Network, set the port to `36742` and the manual peer
 `omarchy@100.64.0.3:36742`, then click **Apply Network Settings**. Settings lists this Mac's
 addresses and port so you can copy them into the omaclip command.
 
+ClipShare's manual peers can use host names as well as IP addresses, for example
+`omarchy@omarchy.local:36742` or a Tailscale MagicDNS name like `omarchy.tail1234.ts.net:36742`.
+They're resolved to IPv4 every 30 seconds, so a peer whose address changes keeps working.
+omaclip's own `--peers-list` on Linux only accepts IP addresses.
+
 ## How it works
 
 Every peer runs a small HTTPS server, and peers poll each other every 2 seconds:

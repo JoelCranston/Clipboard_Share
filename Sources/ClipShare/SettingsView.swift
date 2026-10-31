@@ -58,12 +58,12 @@ struct SettingsView: View {
 
             Section {
                 TextField("Sync port (0 = random)", text: $portDraft)
-                TextField("Manual peers", text: $peersDraft, prompt: Text("omarchy@100.101.102.103:36742; laptop@192.168.1.20:36742"))
+                TextField("Manual peers", text: $peersDraft, prompt: Text("omarchy@omarchy.local:36742; laptop@100.101.102.103:36742"))
                 Button("Apply Network Settings") { applyNetwork() }
             } header: {
                 Text("Network")
             } footer: {
-                Text("Leave manual peers empty to discover omaclip on the local network with Bonjour. For Tailscale or other VPNs, set a fixed port here and on Linux (--sync-server-port), and list each machine as name@ip:port (omaclip's --peers-list format).")
+                Text("Leave manual peers empty to discover omaclip on the local network with Bonjour. For Tailscale or other VPNs, set a fixed port here and on Linux (--sync-server-port), and list each machine as name@host:port, where host is an IP address or a host name such as omarchy.local or a Tailscale MagicDNS name.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

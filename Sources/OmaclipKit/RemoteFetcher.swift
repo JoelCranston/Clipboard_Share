@@ -6,6 +6,7 @@ public enum PeerError: LocalizedError {
     case missingChecksum
     case unsupportedContentType(String)
     case contentChecksumMismatch(String)
+    case unresolvedHost(String)
 
     public var errorDescription: String? {
         switch self {
@@ -14,6 +15,7 @@ public enum PeerError: LocalizedError {
         case .missingChecksum: return "Peer sent no checksum"
         case .unsupportedContentType(let type): return "Unsupported content type \(type)"
         case .contentChecksumMismatch(let id): return "Checksum mismatch for entry \(id)"
+        case .unresolvedHost(let host): return "Can't resolve \(host)"
         }
     }
 }
@@ -90,6 +92,7 @@ public actor RemoteFetcher {
 
     private let client: PeerHTTPClient
     private var states: [String: PeerState] = [:]
+    private var resolved: [String: (address: String, expires: Date)] = [:]
 
     public init(credentials: PeerCredentials) {
         client = PeerHTTPClient(credentials: credentials)
@@ -103,8 +106,22 @@ public actor RemoteFetcher {
         states[name] = nil
     }
 
+    /// Resolves host names, caching each answer for 30 seconds.
+    private func address(for host: String) async throws -> String {
+        if IPv4.bytes(host) != nil { return host }
+        if let cached = resolved[host], cached.expires > Date() { return cached.address }
+        guard let address = await IPv4.resolve(host) else {
+            resolved[host] = nil
+            throw PeerError.unresolvedHost(host)
+        }
+        resolved[host] = (address, Date().addingTimeInterval(30))
+        return address
+    }
+
     /// Returns the peer's newest-first history if it changed since the last call, or nil if not.
-    public func fetch(_ peer: Peer) async throws -> [RemoteEntry]? {
+    public func fetch(_ named: Peer) async throws -> [RemoteEntry]? {
+        // Connect by IP so the certificate's IP address SANs can be checked, as omaclip does.
+        let peer = Peer(name: named.name, host: try await address(for: named.host), port: named.port)
         var state = states[peer.name] ?? PeerState()
         let checksumData = try await client.get(peer, "/api/clipboard/checksum")
         let checksum = try JSONDecoder().decode(ChecksumResponse.self, from: checksumData).checksum
