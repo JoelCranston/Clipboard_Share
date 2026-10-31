@@ -2,11 +2,13 @@
 
 # ClipShare
 
-**Share your clipboard between macOS and [Omarchy](https://omarchy.org) Linux.**
+**Share your clipboard between macOS and Linux.**
 
 ClipShare is a native macOS menu bar app that syncs clipboard history with
-[omaclip](https://github.com/rhemvi/omaclip), the clipboard manager for Omarchy. Copy something
-on your Linux machine and paste it on your Mac with one shortcut, or the other way around.
+[omaclip](https://github.com/rhemvi/omaclip), a clipboard manager for Linux. omaclip is built with
+[Omarchy](https://omarchy.org) in mind but runs on most distributions (Arch, Debian/Ubuntu,
+Fedora, openSUSE and others). Copy something on your Linux machine and paste it on your Mac with
+one shortcut, or the other way around.
 
 Linux keeps running stock omaclip, unchanged. ClipShare speaks omaclip's sync protocol (v2)
 directly, so it replaces omaclip's own macOS build with something that feels at home on a Mac:
@@ -124,7 +126,8 @@ key, manifest JSON and checksum, JSON escaping), and run a real HTTPS server ↔
 ## Acknowledgements
 
 ClipShare is an independent client for [omaclip](https://github.com/rhemvi/omaclip) by Athanasios
-Ntavelis and isn't affiliated with the omaclip or Omarchy projects.
+Ntavelis. omaclip is its own project and not part of Omarchy, and ClipShare isn't affiliated with
+either one.
 
 ## License
 
