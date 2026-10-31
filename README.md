@@ -126,8 +126,7 @@ key, manifest JSON and checksum, JSON escaping), and run a real HTTPS server ↔
 ## Acknowledgements
 
 ClipShare is an independent client for [omaclip](https://github.com/rhemvi/omaclip) by Athanasios
-Ntavelis. omaclip is its own project and not part of Omarchy, and ClipShare isn't affiliated with
-either one.
+Ntavelis.
 
 ## License
 
