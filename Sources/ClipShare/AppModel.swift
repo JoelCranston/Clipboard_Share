@@ -1,5 +1,7 @@
 import AppKit
+import Network
 import OmaclipKit
+import os
 
 /// A clipboard item from this Mac or a peer, as shown in the history panel.
 struct ClipItem: Identifiable, Equatable {
@@ -59,7 +61,10 @@ final class AppModel: ObservableObject {
     private var pollTimer: Timer?
     private var addressTimer: Timer?
     private var certifiedAddresses: [String] = []
-    private var inFlight: Set<String> = []
+    /// Peers with a fetch running, and when it started.
+    private var inFlight: [String: Date] = [:]
+    private var pathMonitor: NWPathMonitor?
+    private let log = Logger(subsystem: "com.joelcranston.ClipShare", category: "sync")
     private var generation = 0
     /// Newest entry per peer that auto-copy has already considered.
     private var autoCopySeen: [String: String] = [:]
@@ -70,6 +75,7 @@ final class AppModel: ObservableObject {
 
     func start() {
         monitor.start()
+        watchForWakeAndNetworkChanges()
         if preferences.passphrase == nil, let imported = Preferences.omaclipConfigPassphrase(),
            (try? SyncKey.validate(imported)) != nil {
             preferences.setPassphrase(imported)
@@ -241,7 +247,7 @@ final class AppModel: ObservableObject {
         listeningPort = nil
         peerStatuses = []
         remoteItems = [:]
-        inFlight = []
+        inFlight = [:]
         autoCopySeen = [:]
     }
 
@@ -261,6 +267,47 @@ final class AppModel: ObservableObject {
         pollPeers()
     }
 
+    /// After sleep or a network change, old connections and addresses are often dead: re-announce,
+    /// forget cached addresses and poll right away instead of waiting for timeouts.
+    private func watchForWakeAndNetworkChanges() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.networkDidChange(reason: "wake") }
+        }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            let interfaces = path.availableInterfaces.map(\.name).joined(separator: ",")
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.pathDidUpdate(satisfied: satisfied, interfaces: interfaces) }
+            }
+        }
+        monitor.start(queue: .global(qos: .utility))
+        pathMonitor = monitor
+    }
+
+    private var lastPath: String?
+
+    private func pathDidUpdate(satisfied: Bool, interfaces: String) {
+        let key = "\(satisfied)|\(interfaces)"
+        // The monitor reports the current path once on start; only react to real changes.
+        defer { lastPath = key }
+        guard let lastPath, lastPath != key, satisfied else { return }
+        networkDidChange(reason: "network change")
+    }
+
+    private func networkDidChange(reason: String) {
+        guard let fetcher else { return }
+        log.notice("Refreshing peers after \(reason, privacy: .public)")
+        refreshCertificateIfAddressesChanged()
+        discovery?.refresh()
+        Task {
+            await fetcher.resetAddresses()
+            self.pollPeers()
+        }
+    }
+
     private func refreshCertificateIfAddressesChanged() {
         let addresses = IPv4.localAddresses()
         guard Set(addresses) != Set(certifiedAddresses), let credentials, let server else { return }
@@ -275,15 +322,18 @@ final class AppModel: ObservableObject {
 
     private func pollPeers() {
         guard let fetcher else { return }
-        for status in peerStatuses where !inFlight.contains(status.peer.name) {
+        let now = Date()
+        for status in peerStatuses {
+            // A fetch normally ends within the request timeouts; never let a stuck one block a peer for good.
+            if let started = inFlight[status.peer.name], now.timeIntervalSince(started) < 60 { continue }
             let peer = status.peer
-            inFlight.insert(peer.name)
+            inFlight[peer.name] = now
             let currentGeneration = generation
             Task {
                 let outcome: Result<[RemoteEntry]?, Error>
                 do { outcome = .success(try await fetcher.fetch(peer)) } catch { outcome = .failure(error) }
                 guard currentGeneration == self.generation else { return }
-                self.inFlight.remove(peer.name)
+                if self.inFlight[peer.name] == now { self.inFlight[peer.name] = nil }
                 self.apply(outcome, from: peer)
             }
         }
@@ -293,8 +343,14 @@ final class AppModel: ObservableObject {
         guard let index = peerStatuses.firstIndex(where: { $0.peer.name == peer.name }) else { return }
         switch outcome {
         case .failure(let error):
+            if peerStatuses[index].lastError == nil {
+                log.notice("Lost \(peer.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
             peerStatuses[index].lastError = error.localizedDescription
         case .success(let entries):
+            if peerStatuses[index].lastError != nil || peerStatuses[index].lastSync == nil {
+                log.notice("Connected to \(peer.name, privacy: .public)")
+            }
             peerStatuses[index].lastError = nil
             peerStatuses[index].lastSync = Date()
             guard let entries else { return }

@@ -92,7 +92,9 @@ public actor RemoteFetcher {
 
     private let client: PeerHTTPClient
     private var states: [String: PeerState] = [:]
-    private var resolved: [String: (address: String, expires: Date)] = [:]
+    private var resolved: [String: (addresses: [String], expires: Date)] = [:]
+    /// The address that last answered for each peer, tried first next time.
+    private var preferred: [String: String] = [:]
 
     public init(credentials: PeerCredentials) {
         client = PeerHTTPClient(credentials: credentials)
@@ -104,27 +106,67 @@ public actor RemoteFetcher {
 
     public func forget(peerNamed name: String) {
         states[name] = nil
+        preferred[name] = nil
     }
 
-    /// Resolves host names, caching each answer for 30 seconds.
-    private func address(for host: String) async throws -> String {
-        if IPv4.bytes(host) != nil { return host }
-        if let cached = resolved[host], cached.expires > Date() { return cached.address }
-        guard let address = await IPv4.resolve(host) else {
-            resolved[host] = nil
-            throw PeerError.unresolvedHost(host)
+    /// Drops cached name resolutions and preferred addresses, e.g. after waking from sleep or
+    /// joining another network. History already downloaded is kept.
+    public func resetAddresses() {
+        resolved.removeAll()
+        preferred.removeAll()
+    }
+
+    /// IPv4 addresses to try for a peer: the last one that worked, then advertised or resolved
+    /// addresses on this Mac's own subnets, then the rest. Resolutions are cached for 30 seconds.
+    private func candidates(for peer: Peer) async throws -> [String] {
+        var addresses = peer.addresses
+        if addresses.isEmpty {
+            if IPv4.bytes(peer.host) != nil {
+                addresses = [peer.host]
+            } else if let cached = resolved[peer.host], cached.expires > Date() {
+                addresses = cached.addresses
+            } else {
+                addresses = await IPv4.resolveAll(peer.host)
+                guard !addresses.isEmpty else {
+                    resolved[peer.host] = nil
+                    throw PeerError.unresolvedHost(peer.host)
+                }
+                resolved[peer.host] = (addresses, Date().addingTimeInterval(30))
+            }
         }
-        resolved[host] = (address, Date().addingTimeInterval(30))
-        return address
+        addresses = IPv4.preferringLocalSubnets(addresses)
+        if let last = preferred[peer.name], let index = addresses.firstIndex(of: last) {
+            addresses.insert(addresses.remove(at: index), at: 0)
+        }
+        return addresses
+    }
+
+    /// Fetches the checksum from the first candidate address that answers. Transport failures
+    /// move on to the next address; HTTP errors (such as a passphrase mismatch) do not.
+    private func connect(_ named: Peer) async throws -> (peer: Peer, checksum: String) {
+        var lastError: Error = PeerError.unresolvedHost(named.host)
+        for address in try await candidates(for: named) {
+            // Connect by IP so the certificate's IP address SANs can be checked, as omaclip does.
+            let peer = Peer(name: named.name, host: address, port: named.port)
+            do {
+                let data = try await client.get(peer, "/api/clipboard/checksum")
+                let checksum = try JSONDecoder().decode(ChecksumResponse.self, from: data).checksum
+                preferred[named.name] = address
+                return (peer, checksum)
+            } catch let error as URLError {
+                lastError = error
+                if preferred[named.name] == address { preferred[named.name] = nil }
+                // A peer advertised by name may have moved; look it up again next time.
+                resolved[named.host] = nil
+            }
+        }
+        throw lastError
     }
 
     /// Returns the peer's newest-first history if it changed since the last call, or nil if not.
     public func fetch(_ named: Peer) async throws -> [RemoteEntry]? {
-        // Connect by IP so the certificate's IP address SANs can be checked, as omaclip does.
-        let peer = Peer(name: named.name, host: try await address(for: named.host), port: named.port)
+        let (peer, checksum) = try await connect(named)
         var state = states[peer.name] ?? PeerState()
-        let checksumData = try await client.get(peer, "/api/clipboard/checksum")
-        let checksum = try JSONDecoder().decode(ChecksumResponse.self, from: checksumData).checksum
         guard !checksum.isEmpty else { throw PeerError.missingChecksum }
         if checksum == state.committedChecksum { return nil }
 

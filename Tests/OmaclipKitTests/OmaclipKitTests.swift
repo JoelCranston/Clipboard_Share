@@ -124,6 +124,12 @@ final class OmaclipKitTests: XCTestCase {
         let unchanged = try await fetcher.fetch(peer)
         XCTAssertNil(unchanged)
 
+        // An unreachable advertised address falls through to the next one that answers.
+        let failover = RemoteFetcher(credentials: credentials)
+        let multiHomed = Peer(name: "multi", host: "127.0.0.2", port: server.port, addresses: ["127.0.0.2", "127.0.0.1"])
+        let viaFallback = try await failover.fetch(multiHomed)
+        XCTAssertEqual(viaFallback?.first?.text, "hello from the mac")
+
         let wrong = RemoteFetcher(credentials: try PeerCredentials(key: SyncKey(bytes: Array(repeating: 4, count: 32))))
         do {
             _ = try await wrong.fetch(peer)

@@ -32,7 +32,12 @@ public enum IPv4 {
     /// Resolves a host name to an IPv4 address with the system resolver (which also handles
     /// `.local` names over mDNS and Tailscale MagicDNS). IPv4 literals are returned unchanged.
     public static func resolve(_ host: String) async -> String? {
-        if bytes(host) != nil { return host }
+        await resolveAll(host).first
+    }
+
+    /// Every IPv4 address the system resolver returns for `host`, in resolver order, without duplicates.
+    public static func resolveAll(_ host: String) async -> [String] {
+        if bytes(host) != nil { return [host] }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 var hints = addrinfo()
@@ -40,21 +45,59 @@ public enum IPv4 {
                 hints.ai_socktype = SOCK_STREAM
                 var result: UnsafeMutablePointer<addrinfo>?
                 guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else {
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: [])
                     return
                 }
                 defer { freeaddrinfo(result) }
+                var addresses: [String] = []
                 var cursor: UnsafeMutablePointer<addrinfo>? = first
                 while let entry = cursor?.pointee {
-                    if let address = entry.ai_addr, let text = string(from: address) {
-                        continuation.resume(returning: text)
-                        return
+                    if let address = entry.ai_addr, let text = string(from: address), !addresses.contains(text) {
+                        addresses.append(text)
                     }
                     cursor = entry.ai_next
                 }
-                continuation.resume(returning: nil)
+                continuation.resume(returning: addresses)
             }
         }
+    }
+
+    /// Orders candidate addresses so ones on a subnet this Mac is directly attached to come first,
+    /// keeping the original order otherwise.
+    public static func preferringLocalSubnets(_ addresses: [String]) -> [String] {
+        let subnets = localSubnets()
+        func isLocal(_ address: String) -> Bool {
+            guard let value = uint32(address) else { return false }
+            return subnets.contains { value & $0.mask == $0.network }
+        }
+        return addresses.filter(isLocal) + addresses.filter { !isLocal($0) }
+    }
+
+    private static func uint32(_ text: String) -> UInt32? {
+        bytes(text).map { $0.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) } }
+    }
+
+    private static func localSubnets() -> [(network: UInt32, mask: UInt32)] {
+        var result: [(UInt32, UInt32)] = []
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0, let first = head else { return result }
+        defer { freeifaddrs(head) }
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let entry = cursor?.pointee {
+            defer { cursor = entry.ifa_next }
+            let flags = Int32(entry.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0,
+                  let address = entry.ifa_addr, let netmask = entry.ifa_netmask,
+                  let addressText = string(from: address), let value = uint32(addressText)
+            else { continue }
+            // Netmask sockaddrs don't always carry AF_INET, so read the bits directly.
+            let mask = netmask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+            }
+            guard mask != 0 else { continue }
+            result.append((value & mask, mask))
+        }
+        return result
     }
 
     /// Formats an IPv4 sockaddr as text, or returns nil for other families.
@@ -74,13 +117,16 @@ public struct Peer: Hashable, Sendable, Identifiable {
     public let name: String
     public let host: String
     public let port: Int
+    /// Every IPv4 address the peer advertised (from Bonjour). When empty, `host` is resolved instead.
+    public let addresses: [String]
 
     public var id: String { name }
 
-    public init(name: String, host: String, port: Int) {
+    public init(name: String, host: String, port: Int, addresses: [String] = []) {
         self.name = name
         self.host = host
         self.port = port
+        self.addresses = addresses
     }
 
     /// A short label: mDNS names look like `hostname-port`, so the port suffix is dropped.
