@@ -49,8 +49,7 @@ public final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetSer
         startBrowsing()
         // omaclip picks a new random port on restart, so re-resolve periodically to notice moves.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.resolveAll()
-            self?.dropStalePeers()
+            self?.tick()
         }
     }
 
@@ -90,6 +89,20 @@ public final class BonjourDiscovery: NSObject, NetServiceBrowserDelegate, NetSer
         browser.delegate = self
         browser.searchForServices(ofType: Self.serviceType, inDomain: "local.")
         self.browser = browser
+    }
+
+    private var ticks = 0
+
+    private func tick() {
+        resolveAll()
+        dropStalePeers()
+        ticks += 1
+        // With no usable peer, restart the browse every minute: omaclip's mDNS responder only
+        // answers queries, so a fresh query is how a returning peer gets noticed.
+        if ticks % 4 == 0, !known.values.contains(where: { $0.peer != nil }) {
+            browser?.stop()
+            startBrowsing()
+        }
     }
 
     private func resolveAll() {
